@@ -1,5 +1,4 @@
 using Financeiro.Api.Autenticacao;
-using Financeiro.Dominio.Enums;
 using Financeiro.Dominio.Servicos;
 
 namespace Financeiro.Api.Endpoints;
@@ -14,18 +13,7 @@ public static class ContasEndpoints
         {
             var usuario = UsuarioHttp.Exigir(http);
             var contas = await livro.ListarAsync(usuario.Id, cancellationToken);
-            return Results.Ok(contas.Select(c => new
-            {
-                id = c.Conta.Id,
-                nome = c.Conta.Nome,
-                tipo = c.Conta.Tipo,
-                saldoInicial = c.Conta.SaldoInicial,
-                saldo = c.Saldo,
-                ativa = c.Conta.Ativa,
-                padrao = c.Conta.Padrao,
-                temLancamentos = c.TemLancamentos,
-                criadoEm = c.Conta.CriadoEm,
-            }));
+            return Results.Ok(contas.Select(Mapear));
         });
 
         grupo.MapPost("/", async (HttpContext http, CriarContaRequest corpo, IContasLivro livro, CancellationToken cancellationToken) =>
@@ -37,17 +25,70 @@ public static class ContasEndpoints
                     usuario.Id,
                     new DadosConta(corpo.Nome, corpo.Tipo, corpo.SaldoInicial, corpo.Padrao),
                     cancellationToken);
+                var listagem = await livro.ListarAsync(usuario.Id, cancellationToken);
+                var criada = listagem.First(c => c.Conta.Id == conta.Id);
+                return Results.Created($"/api/contas/{conta.Id}", Mapear(criada));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { mensagem = ex.Message });
+            }
+        });
 
-                return Results.Created($"/api/contas/{conta.Id}", new
-                {
-                    id = conta.Id,
-                    nome = conta.Nome,
-                    tipo = conta.Tipo,
-                    saldoInicial = conta.SaldoInicial,
-                    ativa = conta.Ativa,
-                    padrao = conta.Padrao,
-                    criadoEm = conta.CriadoEm,
-                });
+        grupo.MapPut("/{id:guid}", async (
+            HttpContext http,
+            Guid id,
+            CriarContaRequest corpo,
+            IContasLivro livro,
+            CancellationToken cancellationToken) =>
+        {
+            var usuario = UsuarioHttp.Exigir(http);
+            try
+            {
+                await livro.EditarAsync(
+                    usuario.Id,
+                    id,
+                    new DadosConta(corpo.Nome, corpo.Tipo, corpo.SaldoInicial, corpo.Padrao),
+                    cancellationToken);
+                var listagem = await livro.ListarAsync(usuario.Id, cancellationToken);
+                var editada = listagem.First(c => c.Conta.Id == id);
+                return Results.Ok(Mapear(editada));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { mensagem = ex.Message });
+            }
+        });
+
+        grupo.MapPost("/{id:guid}/desativar", async (
+            HttpContext http,
+            Guid id,
+            IContasLivro livro,
+            CancellationToken cancellationToken) =>
+        {
+            var usuario = UsuarioHttp.Exigir(http);
+            try
+            {
+                await livro.DesativarAsync(usuario.Id, id, cancellationToken);
+                return Results.NoContent();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { mensagem = ex.Message });
+            }
+        });
+
+        grupo.MapPost("/{id:guid}/reativar", async (
+            HttpContext http,
+            Guid id,
+            IContasLivro livro,
+            CancellationToken cancellationToken) =>
+        {
+            var usuario = UsuarioHttp.Exigir(http);
+            try
+            {
+                await livro.ReativarAsync(usuario.Id, id, cancellationToken);
+                return Results.NoContent();
             }
             catch (InvalidOperationException ex)
             {
@@ -57,6 +98,19 @@ public static class ContasEndpoints
 
         return grupo;
     }
+
+    private static object Mapear(ContaComSaldo c) => new
+    {
+        id = c.Conta.Id,
+        nome = c.Conta.Nome,
+        tipo = c.Conta.Tipo,
+        saldoInicial = c.Conta.SaldoInicial,
+        saldo = c.Saldo,
+        ativa = c.Conta.Ativa,
+        padrao = c.Conta.Padrao,
+        temLancamentos = c.TemLancamentos,
+        criadoEm = c.Conta.CriadoEm,
+    };
 
     public sealed record CriarContaRequest(string Nome, string Tipo, decimal SaldoInicial, bool Padrao);
 }
