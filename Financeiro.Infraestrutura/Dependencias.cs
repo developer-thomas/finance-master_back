@@ -22,6 +22,8 @@ public static class Dependencias
         services.AddScoped<IResolvedorUsuario, ResolvedorUsuario>();
         services.AddScoped<IContasLivro, ContasLivro>();
         services.AddScoped<ICategoriasLivro, CategoriasLivro>();
+        services.AddScoped<ITransacoesLivro, TransacoesLivro>();
+        services.AddScoped<IPainelLivro, PainelLivro>();
 
         return services;
     }

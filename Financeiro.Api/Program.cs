@@ -87,6 +87,8 @@ app.MapGet("/health", async (FinanceiroDbContext db, CancellationToken cancellat
 app.MapPerfilEndpoints();
 app.MapContasEndpoints();
 app.MapCategoriasEndpoints();
+app.MapTransacoesEndpoints();
+app.MapPainelEndpoints();
 
 app.Run();
 
