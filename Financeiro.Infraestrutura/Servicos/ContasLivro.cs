@@ -44,20 +44,7 @@ public sealed class ContasLivro(
     public async Task<ContaFinanceira> CriarAsync(Guid usuarioId, DadosConta dados, CancellationToken cancellationToken)
     {
         var nome = NormalizarNome(dados.Nome);
-        if (string.IsNullOrWhiteSpace(nome))
-        {
-            throw new InvalidOperationException("O nome da conta é obrigatório.");
-        }
-
-        if (!TipoConta.Todos.Contains(dados.Tipo))
-        {
-            throw new InvalidOperationException("Tipo de conta inválido.");
-        }
-
-        if (dados.SaldoInicial < 0)
-        {
-            throw new InvalidOperationException("O saldo inicial não pode ser negativo.");
-        }
+        ValidarCampos(nome, dados.Tipo, dados.SaldoInicial);
 
         var nomeOcupado = await db.ContasFinanceiras
             .AnyAsync(
@@ -87,19 +74,151 @@ public sealed class ContasLivro(
 
         if (conta.Padrao && temPadrao)
         {
-            var atuais = await db.ContasFinanceiras
-                .Where(c => c.UsuarioId == usuarioId && c.Padrao)
-                .ToListAsync(cancellationToken);
-            foreach (var atual in atuais)
-            {
-                atual.Padrao = false;
-                atual.AtualizadoEm = agora;
-            }
+            await LimparPadraoAsync(usuarioId, agora, cancellationToken);
         }
 
         db.ContasFinanceiras.Add(conta);
         await db.SaveChangesAsync(cancellationToken);
         return conta;
+    }
+
+    public async Task<ContaFinanceira> EditarAsync(
+        Guid usuarioId,
+        Guid id,
+        DadosConta dados,
+        CancellationToken cancellationToken)
+    {
+        var conta = await ObterAsync(usuarioId, id, cancellationToken);
+        var nome = NormalizarNome(dados.Nome);
+        ValidarCampos(nome, dados.Tipo, dados.SaldoInicial);
+
+        var nomeOcupado = await db.ContasFinanceiras
+            .AnyAsync(
+                c => c.UsuarioId == usuarioId && c.Id != id && c.Nome.ToLower() == nome.ToLower(),
+                cancellationToken);
+        if (nomeOcupado)
+        {
+            throw new InvalidOperationException("Já existe uma conta com esse nome.");
+        }
+
+        var temLancamentos = await db.Transacoes
+            .IgnoreQueryFilters()
+            .AnyAsync(t => t.UsuarioId == usuarioId && t.ContaId == id, cancellationToken);
+
+        var saldoInicial = decimal.Round(dados.SaldoInicial, 2, MidpointRounding.AwayFromZero);
+        if (temLancamentos && saldoInicial != conta.SaldoInicial)
+        {
+            throw new InvalidOperationException(
+                "O saldo inicial só pode ser corrigido enquanto a conta não tiver lançamentos.");
+        }
+
+        var agora = relogio.Agora();
+        conta.Nome = nome;
+        conta.Tipo = dados.Tipo;
+        conta.SaldoInicial = saldoInicial;
+        conta.AtualizadoEm = agora;
+
+        if (dados.Padrao && conta.Ativa)
+        {
+            await LimparPadraoAsync(usuarioId, agora, cancellationToken);
+            conta.Padrao = true;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return conta;
+    }
+
+    public async Task DesativarAsync(Guid usuarioId, Guid id, CancellationToken cancellationToken)
+    {
+        var conta = await ObterAsync(usuarioId, id, cancellationToken);
+        if (!conta.Ativa)
+        {
+            return;
+        }
+
+        var agora = relogio.Agora();
+        conta.Ativa = false;
+        conta.Padrao = false;
+        conta.AtualizadoEm = agora;
+        await GarantirPadraoAsync(usuarioId, agora, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task ReativarAsync(Guid usuarioId, Guid id, CancellationToken cancellationToken)
+    {
+        var conta = await ObterAsync(usuarioId, id, cancellationToken);
+        if (conta.Ativa)
+        {
+            return;
+        }
+
+        var agora = relogio.Agora();
+        var temPadrao = await db.ContasFinanceiras
+            .AnyAsync(c => c.UsuarioId == usuarioId && c.Ativa && c.Padrao, cancellationToken);
+
+        conta.Ativa = true;
+        conta.Padrao = !temPadrao;
+        conta.AtualizadoEm = agora;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<ContaFinanceira> ObterAsync(Guid usuarioId, Guid id, CancellationToken cancellationToken)
+    {
+        return await db.ContasFinanceiras
+            .FirstOrDefaultAsync(c => c.UsuarioId == usuarioId && c.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Conta não encontrada.");
+    }
+
+    private async Task LimparPadraoAsync(Guid usuarioId, DateTimeOffset agora, CancellationToken cancellationToken)
+    {
+        var atuais = await db.ContasFinanceiras
+            .Where(c => c.UsuarioId == usuarioId && c.Padrao)
+            .ToListAsync(cancellationToken);
+        foreach (var atual in atuais)
+        {
+            atual.Padrao = false;
+            atual.AtualizadoEm = agora;
+        }
+    }
+
+    private async Task GarantirPadraoAsync(Guid usuarioId, DateTimeOffset agora, CancellationToken cancellationToken)
+    {
+        var temPadrao = await db.ContasFinanceiras
+            .AnyAsync(c => c.UsuarioId == usuarioId && c.Ativa && c.Padrao, cancellationToken);
+        if (temPadrao)
+        {
+            return;
+        }
+
+        var maisAntiga = await db.ContasFinanceiras
+            .Where(c => c.UsuarioId == usuarioId && c.Ativa)
+            .OrderBy(c => c.CriadoEm)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (maisAntiga is null)
+        {
+            return;
+        }
+
+        maisAntiga.Padrao = true;
+        maisAntiga.AtualizadoEm = agora;
+    }
+
+    private static void ValidarCampos(string nome, string tipo, decimal saldoInicial)
+    {
+        if (string.IsNullOrWhiteSpace(nome))
+        {
+            throw new InvalidOperationException("O nome da conta é obrigatório.");
+        }
+
+        if (!TipoConta.Todos.Contains(tipo))
+        {
+            throw new InvalidOperationException("Tipo de conta inválido.");
+        }
+
+        if (saldoInicial < 0)
+        {
+            throw new InvalidOperationException("O saldo inicial não pode ser negativo.");
+        }
     }
 
     private static string NormalizarNome(string nome) => nome.Trim();
