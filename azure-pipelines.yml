@@ -1,0 +1,18 @@
+trigger:
+  - main
+  - develop
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: UseDotNet@2
+    inputs:
+      packageType: sdk
+      version: 10.x
+  - script: dotnet restore Financeiro.slnx
+    displayName: Restore
+  - script: dotnet build Financeiro.slnx --configuration Release --no-restore
+    displayName: Build
+  - script: dotnet test Financeiro.slnx --configuration Release --no-build
+    displayName: Test

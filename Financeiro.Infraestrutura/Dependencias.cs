@@ -1,0 +1,29 @@
+using Financeiro.Dominio.Relogio;
+using Financeiro.Dominio.Servicos;
+using Financeiro.Infraestrutura.Persistencia;
+using Financeiro.Infraestrutura.Servicos;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Financeiro.Infraestrutura;
+
+public static class Dependencias
+{
+    public static IServiceCollection AddInfraestrutura(this IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration.GetConnectionString("Financeiro")
+            ?? throw new InvalidOperationException("ConnectionStrings:Financeiro não configurada.");
+
+        services.AddDbContext<FinanceiroDbContext>(options =>
+            options.UseNpgsql(connectionString));
+
+        services.AddSingleton<IRelogioDominio, RelogioSaoPaulo>();
+        services.AddScoped<IResolvedorUsuario, ResolvedorUsuario>();
+        services.AddScoped<IContasLivro, ContasLivro>();
+        services.AddScoped<ICategoriasLivro, CategoriasLivro>();
+
+        return services;
+    }
+}
+
