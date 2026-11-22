@@ -20,7 +20,7 @@ public static class Dependencias
 
         services.AddHttpClient(nameof(InterpretadorTextoGemini), client =>
         {
-            client.Timeout = TimeSpan.FromSeconds(20);
+            client.Timeout = TimeSpan.FromSeconds(45);
         });
 
         services.AddSingleton<IRelogioDominio, RelogioSaoPaulo>();

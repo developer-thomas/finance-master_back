@@ -37,4 +37,29 @@ public sealed class InterpretadorTextoComposto : IInterpretadorTexto
 
         return await _heuristico.InterpretarAsync(usuarioId, texto, cancellationToken);
     }
+
+    /// <summary>
+    /// Interpreta imagem via Gemini; sem chave ou em falha, mensagem amigável (sem heurística local).
+    /// </summary>
+    public async Task<ResultadoInterpretacao> InterpretarImagemAsync(
+        Guid usuarioId,
+        byte[] conteudo,
+        string contentType,
+        CancellationToken cancellationToken)
+    {
+        if (_gemini.EstaConfigurado())
+        {
+            var viaGemini = await _gemini.TentarInterpretarImagemAsync(
+                usuarioId,
+                conteudo,
+                contentType,
+                cancellationToken);
+            if (viaGemini is not null)
+            {
+                return viaGemini;
+            }
+        }
+
+        return await _heuristico.InterpretarImagemAsync(usuarioId, conteudo, contentType, cancellationToken);
+    }
 }

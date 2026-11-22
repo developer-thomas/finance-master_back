@@ -31,4 +31,14 @@ public interface IInterpretadorTexto
         Guid usuarioId,
         string texto,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Lê comprovante/nota (bytes da imagem) e devolve sugestão ou motivo de falha.
+    /// No app, só preenche o formulário — não grava transação.
+    /// </summary>
+    Task<ResultadoInterpretacao> InterpretarImagemAsync(
+        Guid usuarioId,
+        byte[] conteudo,
+        string contentType,
+        CancellationToken cancellationToken);
 }

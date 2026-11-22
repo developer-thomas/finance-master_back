@@ -67,6 +67,21 @@ public sealed class InterpretadorTextoHeuristico : IInterpretadorTexto
     }
 
     /// <summary>
+    /// Heurística local não lê imagem; devolve falha amigável.
+    /// </summary>
+    public Task<ResultadoInterpretacao> InterpretarImagemAsync(
+        Guid usuarioId,
+        byte[] conteudo,
+        string contentType,
+        CancellationToken cancellationToken)
+    {
+        return Task.FromResult(new ResultadoInterpretacao(
+            false,
+            null,
+            "Não consegui ler o valor total desta imagem. Preencha o formulário ou tente outra foto, mais nítida."));
+    }
+
+    /// <summary>
     /// Extrai tipo, valor, data, descrição e categoria do texto livre.
     /// </summary>
     public async Task<ResultadoInterpretacao> InterpretarAsync(
