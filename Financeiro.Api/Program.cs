@@ -102,6 +102,7 @@ app.MapWhatsappEndpoints();
 app.MapWhatsappMensagensEndpoints();
 app.MapWhatsappWebhookEndpoints();
 app.MapInterpretacaoEndpoints();
+app.MapAssistenteEndpoints();
 
 app.Run();
 

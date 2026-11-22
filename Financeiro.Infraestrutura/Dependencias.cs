@@ -35,6 +35,7 @@ public static class Dependencias
         services.AddScoped<InterpretadorTextoGemini>();
         services.AddScoped<IInterpretadorTexto, InterpretadorTextoComposto>();
         services.AddScoped<IMensagensWhatsappLivro, MensagensWhatsappLivro>();
+        services.AddScoped<IAssistenteLivro, AssistenteLivro>();
 
         return services;
     }
