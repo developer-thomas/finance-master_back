@@ -8,6 +8,12 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Segredos locais (gitignored): appsettings.Development.local.json
+builder.Configuration.AddJsonFile(
+    $"appsettings.{builder.Environment.EnvironmentName}.local.json",
+    optional: true,
+    reloadOnChange: true);
+
 builder.Services.AddInfraestrutura(builder.Configuration);
 
 var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
