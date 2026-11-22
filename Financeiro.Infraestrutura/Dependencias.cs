@@ -18,7 +18,10 @@ public static class Dependencias
         services.AddDbContext<FinanceiroDbContext>(options =>
             options.UseNpgsql(connectionString));
 
-        services.AddHttpClient(nameof(InterpretadorTextoGemini));
+        services.AddHttpClient(nameof(InterpretadorTextoGemini), client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(20);
+        });
 
         services.AddSingleton<IRelogioDominio, RelogioSaoPaulo>();
         services.AddScoped<IResolvedorUsuario, ResolvedorUsuario>();

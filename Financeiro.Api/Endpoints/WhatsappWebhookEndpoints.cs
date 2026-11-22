@@ -13,22 +13,22 @@ public static class WhatsappWebhookEndpoints
         var grupo = app.MapGroup("/api/whatsapp/webhook");
 
         // Challenge de verificação do webhook (hub.challenge).
-        grupo.MapGet("/", (
-            string? hub_mode,
-            string? hub_verify_token,
-            string? hub_challenge,
-            IConfiguration config) =>
+        // A Meta envia hub.mode / hub.verify_token / hub.challenge (com ponto).
+        grupo.MapGet("/", (HttpRequest request, IConfiguration config) =>
         {
+            var hubMode = request.Query["hub.mode"].ToString();
+            var hubVerifyToken = request.Query["hub.verify_token"].ToString();
+            var hubChallenge = request.Query["hub.challenge"].ToString();
             var esperado = config["WhatsApp:VerifyToken"];
             if (string.IsNullOrWhiteSpace(esperado))
             {
                 return Results.NotFound();
             }
 
-            if (hub_mode == "subscribe" &&
-                string.Equals(hub_verify_token, esperado, StringComparison.Ordinal))
+            if (hubMode == "subscribe" &&
+                string.Equals(hubVerifyToken, esperado, StringComparison.Ordinal))
             {
-                return Results.Text(hub_challenge ?? string.Empty);
+                return Results.Text(hubChallenge);
             }
 
             return Results.Unauthorized();

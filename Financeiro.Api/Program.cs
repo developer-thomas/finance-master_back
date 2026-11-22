@@ -36,6 +36,8 @@ if (autenticacaoFirebase)
         .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         .AddJwtBearer(options =>
         {
+            // Mantém nomes curtos do Firebase (user_id, email, name).
+            options.MapInboundClaims = false;
             options.Authority = $"https://securetoken.google.com/{firebaseProjectId}";
             options.TokenValidationParameters = new TokenValidationParameters
             {
@@ -44,6 +46,7 @@ if (autenticacaoFirebase)
                 ValidateAudience = true,
                 ValidAudience = firebaseProjectId,
                 ValidateLifetime = true,
+                NameClaimType = "user_id",
             };
         });
 }

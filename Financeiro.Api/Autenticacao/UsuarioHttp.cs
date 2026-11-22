@@ -10,8 +10,11 @@ public static class UsuarioHttp
 
     public static IdentidadeExterna? LerIdentidade(ClaimsPrincipal principal)
     {
-        var uid = principal.FindFirstValue("user_id") ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        var email = principal.FindFirstValue(ClaimTypes.Email) ?? principal.FindFirstValue("email");
+        var uid = principal.FindFirstValue("user_id")
+            ?? principal.FindFirstValue("sub")
+            ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        var email = principal.FindFirstValue("email")
+            ?? principal.FindFirstValue(ClaimTypes.Email);
         if (string.IsNullOrWhiteSpace(uid) || string.IsNullOrWhiteSpace(email))
         {
             return null;
