@@ -1,33 +1,48 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
 using Financeiro.Dominio.Entidades;
 using Financeiro.Dominio.Relogio;
 using Financeiro.Dominio.Servicos;
+using Financeiro.Dominio.Whatsapp;
 using Financeiro.Infraestrutura.Persistencia;
 using Microsoft.EntityFrameworkCore;
 
 namespace Financeiro.Infraestrutura.Servicos;
 
-public sealed class WhatsappLivro(
-    FinanceiroDbContext db,
-    IRelogioDominio relogio) : IWhatsappLivro
+/// <summary>
+/// Vínculo de WhatsApp: emissão de código, confirmação e número único por usuário.
+/// </summary>
+public sealed class WhatsappLivro : IWhatsappLivro
 {
     private static readonly TimeSpan Validade = TimeSpan.FromMinutes(15);
 
-    // Cache em memória do código em claro só para o status da sessão atual (hash fica no banco).
+    /// <summary>
+    /// Cache em memória do código em claro (o banco guarda só o hash).
+    /// </summary>
     private static readonly Dictionary<Guid, CodigoVinculoAtivo> CodigosEmClaro = new();
 
+    private readonly FinanceiroDbContext _db;
+    private readonly IRelogioDominio _relogio;
+
+    public WhatsappLivro(FinanceiroDbContext db, IRelogioDominio relogio)
+    {
+        _db = db;
+        _relogio = relogio;
+    }
+
+    /// <summary>
+    /// Retorna o vínculo atual e o código pendente, se ainda válido.
+    /// </summary>
     public async Task<StatusWhatsapp> ObterStatusAsync(Guid usuarioId, CancellationToken cancellationToken)
     {
-        var vinculo = await db.VinculosWhatsapp
+        var vinculo = await _db.VinculosWhatsapp
             .AsNoTracking()
             .FirstOrDefaultAsync(v => v.UsuarioId == usuarioId, cancellationToken);
 
-        var pendente = await db.CodigosVinculo
+        var pendente = await _db.CodigosVinculo
             .AsNoTracking()
-            .Where(c => c.UsuarioId == usuarioId && c.UsadoEm == null && c.ExpiraEm > relogio.Agora())
+            .Where(c => c.UsuarioId == usuarioId && c.UsadoEm == null && c.ExpiraEm > _relogio.Agora())
             .OrderByDescending(c => c.ExpiraEm)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -55,16 +70,19 @@ public sealed class WhatsappLivro(
             codigo);
     }
 
+    /// <summary>
+    /// Emite um código de 6 dígitos válido por 15 minutos e invalida códigos anteriores do usuário.
+    /// </summary>
     public async Task<CodigoVinculoAtivo> GerarCodigoAsync(
         Guid usuarioId,
         string numeroDigitado,
         CancellationToken cancellationToken)
     {
-        var numero = NormalizarNumero(numeroDigitado)
+        var numero = NumeroWhatsapp.Normalizar(numeroDigitado)
             ?? throw new InvalidOperationException(
                 "Informe um celular válido com DDD, por exemplo (11) 98765-4321.");
 
-        var vinculoAtual = await db.VinculosWhatsapp
+        var vinculoAtual = await _db.VinculosWhatsapp
             .AsNoTracking()
             .FirstOrDefaultAsync(v => v.UsuarioId == usuarioId, cancellationToken);
         if (vinculoAtual?.NumeroE164 == numero)
@@ -72,7 +90,7 @@ public sealed class WhatsappLivro(
             throw new InvalidOperationException("Este número já está vinculado à sua conta.");
         }
 
-        var numeroDeOutro = await db.VinculosWhatsapp
+        var numeroDeOutro = await _db.VinculosWhatsapp
             .AsNoTracking()
             .AnyAsync(v => v.NumeroE164 == numero && v.UsuarioId != usuarioId, cancellationToken);
         if (numeroDeOutro)
@@ -80,13 +98,13 @@ public sealed class WhatsappLivro(
             throw new InvalidOperationException("Este número já está vinculado a outra conta.");
         }
 
-        var antigos = await db.CodigosVinculo
+        var antigos = await _db.CodigosVinculo
             .Where(c => c.UsuarioId == usuarioId && c.UsadoEm == null)
             .ToListAsync(cancellationToken);
-        db.CodigosVinculo.RemoveRange(antigos);
+        _db.CodigosVinculo.RemoveRange(antigos);
 
         var codigo = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6", CultureInfo.InvariantCulture);
-        var agora = relogio.Agora();
+        var agora = _relogio.Agora();
         var registro = new CodigoVinculo
         {
             Id = Guid.NewGuid(),
@@ -96,34 +114,40 @@ public sealed class WhatsappLivro(
             ExpiraEm = agora.Add(Validade),
         };
 
-        db.CodigosVinculo.Add(registro);
-        await db.SaveChangesAsync(cancellationToken);
+        _db.CodigosVinculo.Add(registro);
+        await _db.SaveChangesAsync(cancellationToken);
 
         var ativo = new CodigoVinculoAtivo(numero, codigo, registro.ExpiraEm);
         CodigosEmClaro[usuarioId] = ativo;
         return ativo;
     }
 
+    /// <summary>
+    /// Descarta o código pendente sem criar vínculo.
+    /// </summary>
     public async Task CancelarCodigoAsync(Guid usuarioId, CancellationToken cancellationToken)
     {
-        var antigos = await db.CodigosVinculo
+        var antigos = await _db.CodigosVinculo
             .Where(c => c.UsuarioId == usuarioId && c.UsadoEm == null)
             .ToListAsync(cancellationToken);
-        db.CodigosVinculo.RemoveRange(antigos);
-        await db.SaveChangesAsync(cancellationToken);
+        _db.CodigosVinculo.RemoveRange(antigos);
+        await _db.SaveChangesAsync(cancellationToken);
         CodigosEmClaro.Remove(usuarioId);
     }
 
+    /// <summary>
+    /// Confirma o vínculo quando a mensagem do número traz o código vigente (fluxo WhatsApp real).
+    /// </summary>
     public async Task ConfirmarPorCodigoAsync(
         string numeroE164,
         string codigo,
         CancellationToken cancellationToken)
     {
-        var numero = NormalizarNumero(numeroE164)
+        var numero = NumeroWhatsapp.Normalizar(numeroE164)
             ?? throw new InvalidOperationException("Número inválido.");
 
-        var agora = relogio.Agora();
-        var pendente = await db.CodigosVinculo
+        var agora = _relogio.Agora();
+        var pendente = await _db.CodigosVinculo
             .Where(c =>
                 c.NumeroE164 == numero &&
                 c.UsadoEm == null &&
@@ -142,10 +166,13 @@ public sealed class WhatsappLivro(
         await AplicarVinculoAsync(pendente, agora, cancellationToken);
     }
 
+    /// <summary>
+    /// Confirma o código pendente do usuário sem mensagem real (apenas desenvolvimento).
+    /// </summary>
     public async Task SimularConfirmacaoAsync(Guid usuarioId, CancellationToken cancellationToken)
     {
-        var agora = relogio.Agora();
-        var pendente = await db.CodigosVinculo
+        var agora = _relogio.Agora();
+        var pendente = await _db.CodigosVinculo
             .Where(c => c.UsuarioId == usuarioId && c.UsadoEm == null && c.ExpiraEm > agora)
             .OrderByDescending(c => c.ExpiraEm)
             .FirstOrDefaultAsync(cancellationToken)
@@ -154,25 +181,31 @@ public sealed class WhatsappLivro(
         await AplicarVinculoAsync(pendente, agora, cancellationToken);
     }
 
+    /// <summary>
+    /// Remove o vínculo WhatsApp do usuário.
+    /// </summary>
     public async Task DesvincularAsync(Guid usuarioId, CancellationToken cancellationToken)
     {
-        var vinculo = await db.VinculosWhatsapp
+        var vinculo = await _db.VinculosWhatsapp
             .FirstOrDefaultAsync(v => v.UsuarioId == usuarioId, cancellationToken);
         if (vinculo is null)
         {
             return;
         }
 
-        db.VinculosWhatsapp.Remove(vinculo);
-        await db.SaveChangesAsync(cancellationToken);
+        _db.VinculosWhatsapp.Remove(vinculo);
+        await _db.SaveChangesAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Cria ou troca o vínculo e marca o código como usado.
+    /// </summary>
     private async Task AplicarVinculoAsync(
         CodigoVinculo pendente,
         DateTimeOffset agora,
         CancellationToken cancellationToken)
     {
-        var ocupado = await db.VinculosWhatsapp
+        var ocupado = await _db.VinculosWhatsapp
             .FirstOrDefaultAsync(
                 v => v.NumeroE164 == pendente.NumeroE164 && v.UsuarioId != pendente.UsuarioId,
                 cancellationToken);
@@ -181,11 +214,11 @@ public sealed class WhatsappLivro(
             throw new InvalidOperationException("Este número já está vinculado a outra conta.");
         }
 
-        var atual = await db.VinculosWhatsapp
+        var atual = await _db.VinculosWhatsapp
             .FirstOrDefaultAsync(v => v.UsuarioId == pendente.UsuarioId, cancellationToken);
         if (atual is null)
         {
-            db.VinculosWhatsapp.Add(new VinculoWhatsapp
+            _db.VinculosWhatsapp.Add(new VinculoWhatsapp
             {
                 Id = Guid.NewGuid(),
                 UsuarioId = pendente.UsuarioId,
@@ -200,7 +233,7 @@ public sealed class WhatsappLivro(
         }
 
         pendente.UsadoEm = agora;
-        await db.SaveChangesAsync(cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
         CodigosEmClaro.Remove(pendente.UsuarioId);
     }
 
@@ -210,29 +243,4 @@ public sealed class WhatsappLivro(
         return Convert.ToHexString(bytes);
     }
 
-    public static string? NormalizarNumero(string entrada)
-    {
-        var digitos = Regex.Replace(entrada, @"\D", string.Empty);
-        if (digitos.Length is 12 or 13)
-        {
-            if (!digitos.StartsWith("55", StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            digitos = digitos[2..];
-        }
-
-        if (digitos.Length is not (10 or 11))
-        {
-            return null;
-        }
-
-        if (digitos.Length == 11 && digitos[2] != '9')
-        {
-            return null;
-        }
-
-        return $"+55{digitos}";
-    }
 }

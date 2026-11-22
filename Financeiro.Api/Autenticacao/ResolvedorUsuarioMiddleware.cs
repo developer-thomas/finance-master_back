@@ -2,8 +2,21 @@ using Financeiro.Dominio.Servicos;
 
 namespace Financeiro.Api.Autenticacao;
 
-public sealed class ResolvedorUsuarioMiddleware(RequestDelegate next)
+/// <summary>
+/// Após autenticar o token, resolve/cria o usuário interno e coloca em <see cref="HttpContext.Items"/>.
+/// </summary>
+public sealed class ResolvedorUsuarioMiddleware
 {
+    private readonly RequestDelegate _next;
+
+    public ResolvedorUsuarioMiddleware(RequestDelegate next)
+    {
+        _next = next;
+    }
+
+    /// <summary>
+    /// Preenche o usuário autenticado para os endpoints que usam <see cref="UsuarioHttp"/>.
+    /// </summary>
     public async Task InvokeAsync(HttpContext context, IResolvedorUsuario resolvedor)
     {
         if (context.User.Identity?.IsAuthenticated == true)
@@ -16,6 +29,6 @@ public sealed class ResolvedorUsuarioMiddleware(RequestDelegate next)
             }
         }
 
-        await next(context);
+        await _next(context);
     }
 }

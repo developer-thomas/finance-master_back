@@ -9,18 +9,31 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Financeiro.Infraestrutura.Servicos;
 
-public sealed class TransacoesLivro(
-    FinanceiroDbContext db,
-    IRelogioDominio relogio) : ITransacoesLivro
+/// <summary>
+/// Livro de transações: extrato filtrado, criação, edição e exclusão lógica.
+/// </summary>
+public sealed class TransacoesLivro : ITransacoesLivro
 {
     private const int LimiteDescricao = 120;
 
+    private readonly FinanceiroDbContext _db;
+    private readonly IRelogioDominio _relogio;
+
+    public TransacoesLivro(FinanceiroDbContext db, IRelogioDominio relogio)
+    {
+        _db = db;
+        _relogio = relogio;
+    }
+
+    /// <summary>
+    /// Extrato do usuário com filtros combinados (período, tipo, categoria, conta e busca).
+    /// </summary>
     public async Task<IReadOnlyList<TransacaoDetalhe>> ListarAsync(
         Guid usuarioId,
         FiltroTransacoes filtro,
         CancellationToken cancellationToken)
     {
-        var query = db.Transacoes
+        var query = _db.Transacoes
             .AsNoTracking()
             .Include(t => t.Conta)
             .Include(t => t.Categoria)
@@ -69,9 +82,12 @@ public sealed class TransacoesLivro(
         return lista.Select(MapearDetalhe).ToList();
     }
 
+    /// <summary>
+    /// Obtém uma transação válida (não excluída) do dono.
+    /// </summary>
     public async Task<TransacaoDetalhe?> ObterAsync(Guid usuarioId, Guid id, CancellationToken cancellationToken)
     {
-        var transacao = await db.Transacoes
+        var transacao = await _db.Transacoes
             .AsNoTracking()
             .Include(t => t.Conta)
             .Include(t => t.Categoria)
@@ -80,10 +96,13 @@ public sealed class TransacoesLivro(
         return transacao is null ? null : MapearDetalhe(transacao);
     }
 
+    /// <summary>
+    /// Grava uma nova transação após validar conta, categoria, valor e descrição.
+    /// </summary>
     public async Task<Transacao> CriarAsync(Guid usuarioId, DadosTransacao dados, CancellationToken cancellationToken)
     {
         var validados = await ValidarAsync(usuarioId, dados, contaAtualId: null, cancellationToken);
-        var agora = relogio.Agora();
+        var agora = _relogio.Agora();
 
         var transacao = new Transacao
         {
@@ -101,18 +120,21 @@ public sealed class TransacoesLivro(
             AtualizadoEm = agora,
         };
 
-        db.Transacoes.Add(transacao);
-        await db.SaveChangesAsync(cancellationToken);
+        _db.Transacoes.Add(transacao);
+        await _db.SaveChangesAsync(cancellationToken);
         return transacao;
     }
 
+    /// <summary>
+    /// Altera campos da transação. A conta atual pode permanecer mesmo se já estiver inativa.
+    /// </summary>
     public async Task<Transacao> EditarAsync(
         Guid usuarioId,
         Guid id,
         DadosTransacao dados,
         CancellationToken cancellationToken)
     {
-        var transacao = await db.Transacoes
+        var transacao = await _db.Transacoes
             .FirstOrDefaultAsync(t => t.UsuarioId == usuarioId && t.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Esta transação não existe mais.");
 
@@ -123,23 +145,29 @@ public sealed class TransacoesLivro(
         transacao.Valor = validados.Valor;
         transacao.DataMovimentacao = validados.DataMovimentacao!.Value;
         transacao.Descricao = validados.Descricao!;
-        transacao.AtualizadoEm = relogio.Agora();
+        transacao.AtualizadoEm = _relogio.Agora();
 
-        await db.SaveChangesAsync(cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
         return transacao;
     }
 
+    /// <summary>
+    /// Exclusão lógica: marca <c>ExcluidaEm</c> e remove a transação dos cálculos.
+    /// </summary>
     public async Task ExcluirAsync(Guid usuarioId, Guid id, CancellationToken cancellationToken)
     {
-        var transacao = await db.Transacoes
+        var transacao = await _db.Transacoes
             .FirstOrDefaultAsync(t => t.UsuarioId == usuarioId && t.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Esta transação não existe mais.");
 
-        transacao.ExcluidaEm = relogio.Agora();
+        transacao.ExcluidaEm = _relogio.Agora();
         transacao.AtualizadoEm = transacao.ExcluidaEm.Value;
-        await db.SaveChangesAsync(cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Aplica as invariantes do domínio antes de gravar.
+    /// </summary>
     private async Task<DadosTransacao> ValidarAsync(
         Guid usuarioId,
         DadosTransacao dados,
@@ -162,7 +190,7 @@ public sealed class TransacoesLivro(
             throw new InvalidOperationException("Informe um valor maior que zero.");
         }
 
-        var conta = await db.ContasFinanceiras
+        var conta = await _db.ContasFinanceiras
             .FirstOrDefaultAsync(c => c.UsuarioId == usuarioId && c.Id == dados.ContaId, cancellationToken)
             ?? throw new InvalidOperationException("Escolha uma conta.");
 
@@ -171,7 +199,7 @@ public sealed class TransacoesLivro(
             throw new InvalidOperationException("Esta conta está inativa. Escolha uma conta ativa.");
         }
 
-        var categoria = await db.Categorias
+        var categoria = await _db.Categorias
             .FirstOrDefaultAsync(
                 c => c.Id == dados.CategoriaId &&
                      (c.Escopo == EscopoCategoria.Padrao ||
@@ -186,7 +214,7 @@ public sealed class TransacoesLivro(
                 $"Escolha uma categoria de {(dados.Tipo == TipoTransacao.Despesa ? "despesa" : "receita")}.");
         }
 
-        var data = dados.DataMovimentacao ?? relogio.Hoje();
+        var data = dados.DataMovimentacao ?? _relogio.Hoje();
         var descricao = (dados.Descricao ?? string.Empty).Trim();
         if (descricao.Length > LimiteDescricao)
         {

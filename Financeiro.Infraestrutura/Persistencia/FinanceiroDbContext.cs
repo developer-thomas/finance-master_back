@@ -5,8 +5,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Financeiro.Infraestrutura.Persistencia;
 
-public sealed class FinanceiroDbContext(DbContextOptions<FinanceiroDbContext> options) : DbContext(options)
+public sealed class FinanceiroDbContext : DbContext
 {
+    public FinanceiroDbContext(DbContextOptions<FinanceiroDbContext> options)
+        : base(options)
+    {
+    }
+
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<ContaFinanceira> ContasFinanceiras => Set<ContaFinanceira>();
     public DbSet<Categoria> Categorias => Set<Categoria>();

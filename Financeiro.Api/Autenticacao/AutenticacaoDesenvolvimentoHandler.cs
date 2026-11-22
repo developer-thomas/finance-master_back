@@ -11,11 +11,19 @@ namespace Financeiro.Api.Autenticacao;
 /// Aceita Bearer local.&lt;base64(json)&gt; enquanto o Firebase não está configurado.
 /// Só é registrado em Development.
 /// </summary>
-public sealed class AutenticacaoDesenvolvimentoHandler(
-    IOptionsMonitor<AuthenticationSchemeOptions> options,
-    ILoggerFactory logger,
-    UrlEncoder encoder) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+public sealed class AutenticacaoDesenvolvimentoHandler : AuthenticationHandler<AuthenticationSchemeOptions>
 {
+    public AutenticacaoDesenvolvimentoHandler(
+        IOptionsMonitor<AuthenticationSchemeOptions> options,
+        ILoggerFactory logger,
+        UrlEncoder encoder)
+        : base(options, logger, encoder)
+    {
+    }
+
+    /// <summary>
+    /// Valida o token local e monta as claims de uid, e-mail e nome.
+    /// </summary>
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         if (!Request.Headers.TryGetValue("Authorization", out var header))

@@ -7,15 +7,28 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Financeiro.Infraestrutura.Servicos;
 
-public sealed class CategoriasLivro(
-    FinanceiroDbContext db,
-    IRelogioDominio relogio) : ICategoriasLivro
+/// <summary>
+/// Categorias padrão (seed) e personalizadas do usuário.
+/// </summary>
+public sealed class CategoriasLivro : ICategoriasLivro
 {
     private const int LimiteNome = 40;
 
+    private readonly FinanceiroDbContext _db;
+    private readonly IRelogioDominio _relogio;
+
+    public CategoriasLivro(FinanceiroDbContext db, IRelogioDominio relogio)
+    {
+        _db = db;
+        _relogio = relogio;
+    }
+
+    /// <summary>
+    /// Lista categorias padrão e as personalizadas do dono.
+    /// </summary>
     public async Task<IReadOnlyList<Categoria>> ListarVisiveisAsync(Guid usuarioId, CancellationToken cancellationToken)
     {
-        return await db.Categorias
+        return await _db.Categorias
             .AsNoTracking()
             .Where(c =>
                 c.Escopo == EscopoCategoria.Padrao ||
@@ -25,6 +38,9 @@ public sealed class CategoriasLivro(
             .ToListAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Cria categoria personalizada. Nome único por tipo no conjunto visível ao usuário.
+    /// </summary>
     public async Task<Categoria> CriarAsync(
         Guid usuarioId,
         string tipo,
@@ -63,11 +79,11 @@ public sealed class CategoriasLivro(
             Nome = limpo,
             Escopo = EscopoCategoria.Personalizada,
             UsuarioId = usuarioId,
-            CriadoEm = relogio.Agora(),
+            CriadoEm = _relogio.Agora(),
         };
 
-        db.Categorias.Add(categoria);
-        await db.SaveChangesAsync(cancellationToken);
+        _db.Categorias.Add(categoria);
+        await _db.SaveChangesAsync(cancellationToken);
         return categoria;
     }
 }
