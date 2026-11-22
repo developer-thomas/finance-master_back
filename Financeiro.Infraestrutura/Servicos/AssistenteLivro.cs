@@ -68,7 +68,7 @@ public sealed class AssistenteLivro : IAssistenteLivro
         var apiKey = ObterApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            return new RespostaAssistente(RespostaSemIa(snapshot, texto), false);
+            return new RespostaAssistente(RespostaFallback(snapshot, texto, semChave: true), false);
         }
 
         try
@@ -84,7 +84,7 @@ public sealed class AssistenteLivro : IAssistenteLivro
             _logger.LogWarning(ex, "Falha no assistente Gemini; usando resumo local.");
         }
 
-        return new RespostaAssistente(RespostaSemIa(snapshot, texto), false);
+        return new RespostaAssistente(RespostaFallback(snapshot, texto, semChave: false), false);
     }
 
     private async Task<string> MontarSnapshotAsync(Guid usuarioId, CancellationToken cancellationToken)
@@ -138,9 +138,7 @@ public sealed class AssistenteLivro : IAssistenteLivro
         IReadOnlyList<MensagemAssistenteHistorico>? historico,
         CancellationToken cancellationToken)
     {
-        var modelo = _configuration["Gemini:Model"] ?? "gemini-2.0-flash";
-        var url =
-            $"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={Uri.EscapeDataString(apiKey)}";
+        var modelo = _configuration["Gemini:Model"] ?? GeminiHttp.ModeloPadrao;
 
         var system = new StringBuilder();
         system.AppendLine("Você é o assistente do Finance Master, app de finanças pessoais no Brasil.");
@@ -176,20 +174,26 @@ public sealed class AssistenteLivro : IAssistenteLivro
 
         contents.Add(new { role = "user", parts = new[] { new { text = mensagem } } });
 
-        var client = _httpClientFactory.CreateClient(nameof(InterpretadorTextoGemini));
-        using var resposta = await client.PostAsJsonAsync(
-            url,
+        var client = _httpClientFactory.CreateClient(GeminiHttp.NomeCliente);
+        using var pedido = GeminiHttp.CriarGenerateContent(
+            apiKey,
+            modelo,
             new
             {
                 systemInstruction = new { parts = new[] { new { text = system.ToString() } } },
                 contents,
                 generationConfig = new { temperature = 0.4, maxOutputTokens = 512 },
-            },
-            cancellationToken);
+            });
+        using var resposta = await client.SendAsync(pedido, cancellationToken);
 
         if (!resposta.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Assistente Gemini retornou {Status}.", (int)resposta.StatusCode);
+            var detalhe = await resposta.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning(
+                "Assistente Gemini retornou {Status} (modelo {Modelo}): {Detalhe}",
+                (int)resposta.StatusCode,
+                modelo,
+                detalhe.Length > 300 ? detalhe[..300] : detalhe);
             return null;
         }
 
@@ -207,12 +211,14 @@ public sealed class AssistenteLivro : IAssistenteLivro
             .GetString();
     }
 
-    private static string RespostaSemIa(string snapshot, string mensagem)
+    private static string RespostaFallback(string snapshot, string mensagem, bool semChave)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Ainda sem Gemini configurado, segue o que o livro mostra agora:");
+        sb.AppendLine(
+            semChave
+                ? "A chave do Gemini ainda não está configurada. Enquanto isso, segue o que o livro mostra:"
+                : "Não consegui falar com o Gemini agora. Enquanto isso, segue o que o livro mostra:");
         sb.AppendLine();
-        // Snapshot já está em português legível.
         foreach (var linha in snapshot.Split('\n', StringSplitOptions.RemoveEmptyEntries).Take(12))
         {
             sb.AppendLine(linha);
@@ -220,7 +226,15 @@ public sealed class AssistenteLivro : IAssistenteLivro
 
         sb.AppendLine();
         sb.AppendLine($"Sua pergunta: \"{mensagem}\"");
-        sb.Append("Configure Gemini:ApiKey para eu responder com mais contexto, sempre usando esses números.");
+        if (semChave)
+        {
+            sb.Append("Coloque Gemini:ApiKey em appsettings.Development.local.json e reinicie a API.");
+        }
+        else
+        {
+            sb.Append("Tente de novo em instantes. Se persistir, confira o modelo em Gemini:Model.");
+        }
+
         return sb.ToString();
     }
 

@@ -135,13 +135,11 @@ public sealed class InterpretadorTextoGemini
 
         try
         {
-            var modelo = _configuration["Gemini:Model"] ?? "gemini-2.0-flash";
-            var url =
-                $"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={Uri.EscapeDataString(apiKey)}";
-
-            var client = _httpClientFactory.CreateClient(nameof(InterpretadorTextoGemini));
-            using var resposta = await client.PostAsJsonAsync(
-                url,
+            var modelo = _configuration["Gemini:Model"] ?? GeminiHttp.ModeloPadrao;
+            var client = _httpClientFactory.CreateClient(GeminiHttp.NomeCliente);
+            using var pedido = GeminiHttp.CriarGenerateContent(
+                apiKey,
+                modelo,
                 new
                 {
                     contents = new[] { new { parts } },
@@ -150,15 +148,18 @@ public sealed class InterpretadorTextoGemini
                         temperature = 0.1,
                         responseMimeType = "application/json",
                     },
-                },
-                cancellationToken);
+                });
+            using var resposta = await client.SendAsync(pedido, cancellationToken);
 
             if (!resposta.IsSuccessStatusCode)
             {
+                var detalhe = await resposta.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogWarning(
-                    "Gemini retornou {Status} ao interpretar {Origem}.",
+                    "Gemini retornou {Status} ao interpretar {Origem} (modelo {Modelo}): {Detalhe}",
                     (int)resposta.StatusCode,
-                    origemImagem ? "imagem" : "texto");
+                    origemImagem ? "imagem" : "texto",
+                    modelo,
+                    detalhe.Length > 300 ? detalhe[..300] : detalhe);
                 return null;
             }
 

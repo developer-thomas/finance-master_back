@@ -18,7 +18,7 @@ public static class Dependencias
         services.AddDbContext<FinanceiroDbContext>(options =>
             options.UseNpgsql(connectionString));
 
-        services.AddHttpClient(nameof(InterpretadorTextoGemini), client =>
+        services.AddHttpClient(GeminiHttp.NomeCliente, client =>
         {
             client.Timeout = TimeSpan.FromSeconds(45);
         });
