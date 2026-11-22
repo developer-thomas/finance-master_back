@@ -182,7 +182,13 @@ public sealed class AssistenteLivro : IAssistenteLivro
             {
                 systemInstruction = new { parts = new[] { new { text = system.ToString() } } },
                 contents,
-                generationConfig = new { temperature = 0.4, maxOutputTokens = 512 },
+                // Thinking consome maxOutputTokens; MINIMAL + teto alto evita corte no meio da frase.
+                generationConfig = new
+                {
+                    temperature = 0.4,
+                    maxOutputTokens = 8192,
+                    thinkingConfig = new { thinkingLevel = "MINIMAL" },
+                },
             });
         using var resposta = await client.SendAsync(pedido, cancellationToken);
 
@@ -204,11 +210,43 @@ public sealed class AssistenteLivro : IAssistenteLivro
             return null;
         }
 
-        return candidates[0]
-            .GetProperty("content")
-            .GetProperty("parts")[0]
-            .GetProperty("text")
-            .GetString();
+        var candidato = candidates[0];
+        if (candidato.TryGetProperty("finishReason", out var motivo)
+            && string.Equals(motivo.GetString(), "MAX_TOKENS", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Assistente Gemini terminou por MAX_TOKENS; resposta pode estar incompleta.");
+        }
+
+        return ExtrairTextoResposta(candidato);
+    }
+
+    private static string? ExtrairTextoResposta(JsonElement candidato)
+    {
+        if (!candidato.TryGetProperty("content", out var content)
+            || !content.TryGetProperty("parts", out var parts)
+            || parts.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var sb = new StringBuilder();
+        foreach (var part in parts.EnumerateArray())
+        {
+            // Ignora partes de "thinking" quando a API as devolve no payload.
+            if (part.TryGetProperty("thought", out var thought)
+                && thought.ValueKind == JsonValueKind.True)
+            {
+                continue;
+            }
+
+            if (part.TryGetProperty("text", out var texto))
+            {
+                sb.Append(texto.GetString());
+            }
+        }
+
+        var resultado = sb.ToString().Trim();
+        return string.IsNullOrWhiteSpace(resultado) ? null : resultado;
     }
 
     private static string RespostaFallback(string snapshot, string mensagem, bool semChave)
