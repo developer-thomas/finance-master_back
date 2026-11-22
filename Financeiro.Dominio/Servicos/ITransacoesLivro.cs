@@ -9,7 +9,8 @@ public sealed record DadosTransacao(
     string? Descricao,
     Guid CategoriaId,
     Guid ContaId,
-    string? Origem);
+    string? Origem,
+    string? IdentificadorMensagem = null);
 
 public sealed record FiltroTransacoes(
     DateOnly? De,

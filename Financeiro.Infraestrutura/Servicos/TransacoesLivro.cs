@@ -116,6 +116,7 @@ public sealed class TransacoesLivro : ITransacoesLivro
             DataMovimentacao = validados.DataMovimentacao!.Value,
             Descricao = validados.Descricao!,
             Origem = validados.Origem!,
+            IdentificadorMensagem = validados.IdentificadorMensagem,
             CriadoEm = agora,
             AtualizadoEm = agora,
         };
@@ -232,7 +233,15 @@ public sealed class TransacoesLivro : ITransacoesLivro
             throw new InvalidOperationException("Origem da transação inválida.");
         }
 
-        return new DadosTransacao(dados.Tipo, valor, data, descricao, categoria.Id, conta.Id, origem);
+        return new DadosTransacao(
+            dados.Tipo,
+            valor,
+            data,
+            descricao,
+            categoria.Id,
+            conta.Id,
+            origem,
+            string.IsNullOrWhiteSpace(dados.IdentificadorMensagem) ? null : dados.IdentificadorMensagem.Trim());
     }
 
     private static TransacaoDetalhe MapearDetalhe(Transacao t) =>
