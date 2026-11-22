@@ -89,6 +89,7 @@ app.MapContasEndpoints();
 app.MapCategoriasEndpoints();
 app.MapTransacoesEndpoints();
 app.MapPainelEndpoints();
+app.MapWhatsappEndpoints();
 
 app.Run();
 
