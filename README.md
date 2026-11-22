@@ -31,3 +31,8 @@ curl -X POST http://localhost:5274/api/whatsapp/dev/mensagem \
 ```
 
 Texto completo grava na conta padrão. Texto incompleto só responde o que faltou (sem pendência nesta etapa).
+
+Webhook Meta (quando configurado):
+
+- `GET /api/whatsapp/webhook` — verificação (`WhatsApp:VerifyToken`)
+- `POST /api/whatsapp/webhook` — mensagens de texto inbound
