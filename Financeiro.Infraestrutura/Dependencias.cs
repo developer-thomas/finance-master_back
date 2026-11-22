@@ -24,6 +24,7 @@ public static class Dependencias
         services.AddScoped<ICategoriasLivro, CategoriasLivro>();
         services.AddScoped<ITransacoesLivro, TransacoesLivro>();
         services.AddScoped<IPainelLivro, PainelLivro>();
+        services.AddScoped<IWhatsappLivro, WhatsappLivro>();
 
         return services;
     }
