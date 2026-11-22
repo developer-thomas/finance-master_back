@@ -18,6 +18,8 @@ public static class Dependencias
         services.AddDbContext<FinanceiroDbContext>(options =>
             options.UseNpgsql(connectionString));
 
+        services.AddHttpClient(nameof(InterpretadorTextoGemini));
+
         services.AddSingleton<IRelogioDominio, RelogioSaoPaulo>();
         services.AddScoped<IResolvedorUsuario, ResolvedorUsuario>();
         services.AddScoped<IContasLivro, ContasLivro>();
@@ -25,7 +27,10 @@ public static class Dependencias
         services.AddScoped<ITransacoesLivro, TransacoesLivro>();
         services.AddScoped<IPainelLivro, PainelLivro>();
         services.AddScoped<IWhatsappLivro, WhatsappLivro>();
-        services.AddScoped<IInterpretadorTexto, InterpretadorTextoHeuristico>();
+        services.AddScoped<IConsultasLivro, ConsultasLivro>();
+        services.AddScoped<InterpretadorTextoHeuristico>();
+        services.AddScoped<InterpretadorTextoGemini>();
+        services.AddScoped<IInterpretadorTexto, InterpretadorTextoComposto>();
         services.AddScoped<IMensagensWhatsappLivro, MensagensWhatsappLivro>();
 
         return services;

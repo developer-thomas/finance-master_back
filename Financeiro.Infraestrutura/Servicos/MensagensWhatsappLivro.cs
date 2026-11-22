@@ -11,28 +11,33 @@ using Microsoft.EntityFrameworkCore;
 namespace Financeiro.Infraestrutura.Servicos;
 
 /// <summary>
-/// Canal WhatsApp: identifica o usuário pelo número e grava texto completo na conta padrão.
+/// Canal WhatsApp: identifica o usuário pelo número, responde consultas e grava texto completo na conta padrão.
 /// </summary>
 public sealed class MensagensWhatsappLivro : IMensagensWhatsappLivro
 {
+    private static readonly TimeSpan DuracaoContextoConsulta = TimeSpan.FromMinutes(30);
+
     private readonly FinanceiroDbContext _db;
     private readonly IRelogioDominio _relogio;
     private readonly IInterpretadorTexto _interpretador;
     private readonly ITransacoesLivro _transacoes;
     private readonly IWhatsappLivro _whatsapp;
+    private readonly IConsultasLivro _consultas;
 
     public MensagensWhatsappLivro(
         FinanceiroDbContext db,
         IRelogioDominio relogio,
         IInterpretadorTexto interpretador,
         ITransacoesLivro transacoes,
-        IWhatsappLivro whatsapp)
+        IWhatsappLivro whatsapp,
+        IConsultasLivro consultas)
     {
         _db = db;
         _relogio = relogio;
         _interpretador = interpretador;
         _transacoes = transacoes;
         _whatsapp = whatsapp;
+        _consultas = consultas;
     }
 
     /// <summary>
@@ -125,7 +130,12 @@ public sealed class MensagensWhatsappLivro : IMensagensWhatsappLivro
         var corpo = (texto ?? string.Empty).Trim();
         if (corpo.Length == 0)
         {
-            return Resposta(registro, null, "ignorada", "Envie um texto com a movimentação, por exemplo: gastei 45 no almoço.", null);
+            return Resposta(
+                registro,
+                null,
+                "ignorada",
+                "Envie um texto com a movimentação, por exemplo: gastei 45 no almoço.",
+                null);
         }
 
         // Código de vínculo: mensagem só com 6 dígitos.
@@ -165,28 +175,48 @@ public sealed class MensagensWhatsappLivro : IMensagensWhatsappLivro
         }
 
         registro.UsuarioId = vinculoAtivo.UsuarioId;
+        var usuarioId = vinculoAtivo.UsuarioId;
+
+        // Continuação "e mês passado?" — só com contexto válido.
+        if (_consultas.EhContinuacaoMesPassado(corpo))
+        {
+            return await ResponderContinuacaoMesPassadoAsync(registro, usuarioId, cancellationToken);
+        }
+
+        // Lista fechada de consultas (antes de exigir conta padrão).
+        var pedido = _consultas.Classificar(corpo);
+        if (pedido is not null)
+        {
+            var textoResposta = await _consultas.ResponderAsync(usuarioId, pedido, cancellationToken);
+            if (pedido.Periodo != PeriodoConsulta.NaoSuportado)
+            {
+                await SalvarContextoConsultaAsync(usuarioId, pedido, cancellationToken);
+            }
+
+            return Resposta(registro, usuarioId, "consulta_respondida", textoResposta, null);
+        }
 
         var contaPadrao = await _db.ContasFinanceiras
             .AsNoTracking()
             .FirstOrDefaultAsync(
-                c => c.UsuarioId == vinculoAtivo.UsuarioId && c.Ativa && c.Padrao,
+                c => c.UsuarioId == usuarioId && c.Ativa && c.Padrao,
                 cancellationToken);
         if (contaPadrao is null)
         {
             return Resposta(
                 registro,
-                vinculoAtivo.UsuarioId,
+                usuarioId,
                 "sem_conta",
                 "Você não tem uma conta ativa padrão. Crie ou reative uma conta no app para lançar pelo WhatsApp.",
                 null);
         }
 
-        var interpretacao = await _interpretador.InterpretarAsync(vinculoAtivo.UsuarioId, corpo, cancellationToken);
+        var interpretacao = await _interpretador.InterpretarAsync(usuarioId, corpo, cancellationToken);
         if (!interpretacao.Ok || interpretacao.Sugestao is null)
         {
             return Resposta(
                 registro,
-                vinculoAtivo.UsuarioId,
+                usuarioId,
                 "interpretacao_falhou",
                 interpretacao.Motivo ?? "Não entendi a mensagem. Tente algo como: gastei 45 no almoço.",
                 null);
@@ -197,7 +227,7 @@ public sealed class MensagensWhatsappLivro : IMensagensWhatsappLivro
         {
             return Resposta(
                 registro,
-                vinculoAtivo.UsuarioId,
+                usuarioId,
                 "incompleto",
                 "Faltou o tipo: diga se foi despesa (gastei/paguei) ou receita (recebi/ganhei).",
                 null);
@@ -207,7 +237,7 @@ public sealed class MensagensWhatsappLivro : IMensagensWhatsappLivro
         {
             return Resposta(
                 registro,
-                vinculoAtivo.UsuarioId,
+                usuarioId,
                 "incompleto",
                 "Faltou o valor. Envie de novo com o valor, por exemplo: gastei 45 no almoço.",
                 null);
@@ -217,14 +247,14 @@ public sealed class MensagensWhatsappLivro : IMensagensWhatsappLivro
         {
             return Resposta(
                 registro,
-                vinculoAtivo.UsuarioId,
+                usuarioId,
                 "incompleto",
                 "Não consegui escolher a categoria. Tente de novo ou lance pelo app.",
                 null);
         }
 
         var criada = await _transacoes.CriarAsync(
-            vinculoAtivo.UsuarioId,
+            usuarioId,
             new DadosTransacao(
                 sugestao.Tipo,
                 sugestao.Valor,
@@ -236,7 +266,7 @@ public sealed class MensagensWhatsappLivro : IMensagensWhatsappLivro
                 registro.IdentificadorExterno),
             cancellationToken);
 
-        var detalhe = await _transacoes.ObterAsync(vinculoAtivo.UsuarioId, criada.Id, cancellationToken);
+        var detalhe = await _transacoes.ObterAsync(usuarioId, criada.Id, cancellationToken);
         var tipoRotulo = criada.Tipo == TipoTransacao.Despesa ? "Despesa" : "Receita";
         var valorBr = criada.Valor.ToString("N2", CultureInfo.GetCultureInfo("pt-BR"));
         var dataBr = criada.DataMovimentacao.ToString("dd/MM/yyyy", CultureInfo.GetCultureInfo("pt-BR"));
@@ -244,7 +274,138 @@ public sealed class MensagensWhatsappLivro : IMensagensWhatsappLivro
             $"{tipoRotulo} de R$ {valorBr} — {criada.Descricao}. " +
             $"Categoria: {detalhe?.CategoriaNome}. Data: {dataBr}. Conta: {contaPadrao.Nome}.";
 
-        return Resposta(registro, vinculoAtivo.UsuarioId, "transacao_criada", resposta, criada.Id);
+        return Resposta(registro, usuarioId, "transacao_criada", resposta, criada.Id);
+    }
+
+    private async Task<ResultadoMensagemWhatsapp> ResponderContinuacaoMesPassadoAsync(
+        MensagemProcessada registro,
+        Guid usuarioId,
+        CancellationToken cancellationToken)
+    {
+        var agora = _relogio.Agora();
+        var contexto = await _db.ContextosConsulta
+            .FirstOrDefaultAsync(c => c.UsuarioId == usuarioId, cancellationToken);
+
+        if (contexto is null || contexto.ExpiraEm < agora)
+        {
+            return Resposta(
+                registro,
+                usuarioId,
+                "consulta_sem_contexto",
+                "Não tenho uma consulta recente para repetir. Pergunte de novo, por exemplo: quanto gastei este mês?",
+                null);
+        }
+
+        var pedido = new PedidoConsulta(
+            contexto.Consulta,
+            PeriodoConsulta.MesPassado,
+            await NomeCategoriaAsync(usuarioId, contexto.CategoriaId, cancellationToken),
+            await NomeContaAsync(usuarioId, contexto.ContaId, cancellationToken));
+
+        var textoResposta = await _consultas.ResponderAsync(usuarioId, pedido, cancellationToken);
+        contexto.Periodo = PeriodoConsulta.MesPassado;
+        contexto.ExpiraEm = agora.Add(DuracaoContextoConsulta);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return Resposta(registro, usuarioId, "consulta_respondida", textoResposta, null);
+    }
+
+    private async Task SalvarContextoConsultaAsync(
+        Guid usuarioId,
+        PedidoConsulta pedido,
+        CancellationToken cancellationToken)
+    {
+        // Saldo não se beneficia de "mês passado"; ainda assim guarda para a regra de continuidade genérica.
+        var agora = _relogio.Agora();
+        Guid? categoriaId = null;
+        Guid? contaId = null;
+
+        if (!string.IsNullOrWhiteSpace(pedido.NomeCategoria))
+        {
+            var chave = pedido.NomeCategoria.Trim().ToLowerInvariant();
+            var cats = await _db.Categorias
+                .AsNoTracking()
+                .Where(c =>
+                    c.Escopo == EscopoCategoria.Padrao ||
+                    (c.Escopo == EscopoCategoria.Personalizada && c.UsuarioId == usuarioId))
+                .ToListAsync(cancellationToken);
+            categoriaId = cats
+                .FirstOrDefault(c => c.Nome.Equals(pedido.NomeCategoria, StringComparison.OrdinalIgnoreCase)
+                    || c.Nome.ToLowerInvariant().Contains(chave))
+                ?.Id;
+        }
+
+        if (!string.IsNullOrWhiteSpace(pedido.NomeConta))
+        {
+            var contas = await _db.ContasFinanceiras
+                .AsNoTracking()
+                .Where(c => c.UsuarioId == usuarioId)
+                .ToListAsync(cancellationToken);
+            contaId = contas
+                .FirstOrDefault(c => c.Nome.Equals(pedido.NomeConta, StringComparison.OrdinalIgnoreCase))
+                ?.Id;
+        }
+
+        var existente = await _db.ContextosConsulta
+            .FirstOrDefaultAsync(c => c.UsuarioId == usuarioId, cancellationToken);
+        if (existente is null)
+        {
+            _db.ContextosConsulta.Add(new ContextoConsulta
+            {
+                UsuarioId = usuarioId,
+                Consulta = pedido.Tipo,
+                Periodo = pedido.Periodo,
+                CategoriaId = categoriaId,
+                ContaId = contaId,
+                ExpiraEm = agora.Add(DuracaoContextoConsulta),
+            });
+        }
+        else
+        {
+            existente.Consulta = pedido.Tipo;
+            existente.Periodo = pedido.Periodo;
+            existente.CategoriaId = categoriaId;
+            existente.ContaId = contaId;
+            existente.ExpiraEm = agora.Add(DuracaoContextoConsulta);
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<string?> NomeCategoriaAsync(
+        Guid usuarioId,
+        Guid? categoriaId,
+        CancellationToken cancellationToken)
+    {
+        if (categoriaId is null)
+        {
+            return null;
+        }
+
+        var cat = await _db.Categorias
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                c => c.Id == categoriaId &&
+                     (c.Escopo == EscopoCategoria.Padrao ||
+                      (c.Escopo == EscopoCategoria.Personalizada && c.UsuarioId == usuarioId)),
+                cancellationToken);
+        return cat?.Nome;
+    }
+
+    private async Task<string?> NomeContaAsync(
+        Guid usuarioId,
+        Guid? contaId,
+        CancellationToken cancellationToken)
+    {
+        if (contaId is null)
+        {
+            return null;
+        }
+
+        var conta = await _db.ContasFinanceiras
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == contaId && c.UsuarioId == usuarioId, cancellationToken);
+        return conta?.Nome;
     }
 
     private static ResultadoMensagemWhatsapp Resposta(
