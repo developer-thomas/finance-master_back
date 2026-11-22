@@ -21,7 +21,11 @@ public sealed record PainelResumo(
     IReadOnlyList<TransacaoDetalhe> Recentes,
     bool SemMovimentacao);
 
+/// <summary>
+/// Contrato das leituras do dashboard.
+/// </summary>
 public interface IPainelLivro
 {
+    /// <summary>Calcula saldo total, resumo do mês e recentes.</summary>
     Task<PainelResumo> ObterAsync(Guid usuarioId, CancellationToken cancellationToken);
 }

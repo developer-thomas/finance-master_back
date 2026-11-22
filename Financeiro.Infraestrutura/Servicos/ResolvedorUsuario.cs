@@ -6,10 +6,23 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Financeiro.Infraestrutura.Servicos;
 
-public sealed class ResolvedorUsuario(
-    FinanceiroDbContext db,
-    IRelogioDominio relogio) : IResolvedorUsuario
+/// <summary>
+/// Garante um <see cref="Usuario"/> interno a partir da identidade do token (Firebase ou local).
+/// </summary>
+public sealed class ResolvedorUsuario : IResolvedorUsuario
 {
+    private readonly FinanceiroDbContext _db;
+    private readonly IRelogioDominio _relogio;
+
+    public ResolvedorUsuario(FinanceiroDbContext db, IRelogioDominio relogio)
+    {
+        _db = db;
+        _relogio = relogio;
+    }
+
+    /// <summary>
+    /// Busca o usuário pelo FirebaseUid; se não existir, cria. Atualiza nome/e-mail quando mudam.
+    /// </summary>
     public async Task<Usuario> ObterOuCriarAsync(IdentidadeExterna identidade, CancellationToken cancellationToken)
     {
         var uid = identidade.FirebaseUid.Trim();
@@ -18,7 +31,7 @@ public sealed class ResolvedorUsuario(
             ? email.Split('@')[0]
             : identidade.Nome.Trim();
 
-        var existente = await db.Usuarios
+        var existente = await _db.Usuarios
             .SingleOrDefaultAsync(u => u.FirebaseUid == uid, cancellationToken);
 
         if (existente is not null)
@@ -38,14 +51,14 @@ public sealed class ResolvedorUsuario(
 
             if (mudou)
             {
-                existente.AtualizadoEm = relogio.Agora();
-                await db.SaveChangesAsync(cancellationToken);
+                existente.AtualizadoEm = _relogio.Agora();
+                await _db.SaveChangesAsync(cancellationToken);
             }
 
             return existente;
         }
 
-        var agora = relogio.Agora();
+        var agora = _relogio.Agora();
         var novo = new Usuario
         {
             Id = Guid.NewGuid(),
@@ -56,8 +69,8 @@ public sealed class ResolvedorUsuario(
             AtualizadoEm = agora,
         };
 
-        db.Usuarios.Add(novo);
-        await db.SaveChangesAsync(cancellationToken);
+        _db.Usuarios.Add(novo);
+        await _db.SaveChangesAsync(cancellationToken);
         return novo;
     }
 }

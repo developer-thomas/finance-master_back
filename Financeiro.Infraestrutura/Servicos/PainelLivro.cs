@@ -6,25 +6,39 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Financeiro.Infraestrutura.Servicos;
 
-public sealed class PainelLivro(
-    FinanceiroDbContext db,
-    IContasLivro contas,
-    IRelogioDominio relogio) : IPainelLivro
+/// <summary>
+/// Leituras do dashboard: saldo total, resumo do mês e transações recentes.
+/// </summary>
+public sealed class PainelLivro : IPainelLivro
 {
     private const int LimiteRecentes = 6;
 
+    private readonly FinanceiroDbContext _db;
+    private readonly IContasLivro _contas;
+    private readonly IRelogioDominio _relogio;
+
+    public PainelLivro(FinanceiroDbContext db, IContasLivro contas, IRelogioDominio relogio)
+    {
+        _db = db;
+        _contas = contas;
+        _relogio = relogio;
+    }
+
+    /// <summary>
+    /// Monta o painel do usuário com dados até o dia civil em America/Sao_Paulo.
+    /// </summary>
     public async Task<PainelResumo> ObterAsync(Guid usuarioId, CancellationToken cancellationToken)
     {
-        var hoje = relogio.Hoje();
+        var hoje = _relogio.Hoje();
         var mes = $"{hoje.Year:D4}-{hoje.Month:D2}";
         var inicioMes = new DateOnly(hoje.Year, hoje.Month, 1);
 
-        var contasComSaldo = await contas.ListarAsync(usuarioId, cancellationToken);
+        var contasComSaldo = await _contas.ListarAsync(usuarioId, cancellationToken);
         var saldoTotal = contasComSaldo
             .Where(c => c.Conta.Ativa)
             .Sum(c => c.Saldo);
 
-        var doMes = await db.Transacoes
+        var doMes = await _db.Transacoes
             .AsNoTracking()
             .Include(t => t.Conta)
             .Include(t => t.Categoria)
@@ -52,7 +66,7 @@ public sealed class PainelLivro(
             .OrderByDescending(g => g.Total)
             .ToList();
 
-        var recentes = await db.Transacoes
+        var recentes = await _db.Transacoes
             .AsNoTracking()
             .Include(t => t.Conta)
             .Include(t => t.Categoria)
@@ -62,7 +76,7 @@ public sealed class PainelLivro(
             .Take(LimiteRecentes)
             .ToListAsync(cancellationToken);
 
-        var temMovimentacao = await db.Transacoes
+        var temMovimentacao = await _db.Transacoes
             .AsNoTracking()
             .AnyAsync(t => t.UsuarioId == usuarioId, cancellationToken);
 
